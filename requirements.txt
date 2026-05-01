@@ -1,0 +1,7 @@
+Flask
+flask-cors
+gunicorn
+requests
+beautifulsoup4
+lxml
+fake-useragent
