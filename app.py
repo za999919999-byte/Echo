@@ -6,7 +6,6 @@ from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
-# Ручная установка CORS-заголовков
 @app.after_request
 def add_cors_headers(response):
     response.headers['Access-Control-Allow-Origin'] = '*'
@@ -17,26 +16,18 @@ def add_cors_headers(response):
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
     'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Referer': 'https://ru.hitmoz.org/',
-    'Origin': 'https://ru.hitmoz.org',
 }
 
 @app.route('/search')
 def search():
-    query = request.args.get('q')
-    limit = int(request.args.get('limit', 48))
-    
-    if limit > 48:
-        limit = 48
+    query = request.args.get('q', '')
     if not query:
         return jsonify({"error": "Missing query"}), 400
-
+    
     try:
+        # Прямой запрос к hitmoz (без parse_hitmos)
         search_url = f'https://ru.hitmoz.org/search?q={quote(query)}'
-        session = requests.Session()
-        session.get('https://ru.hitmoz.org/', headers=HEADERS, timeout=10)
-        
-        resp = session.get(search_url, headers=HEADERS, timeout=15)
+        resp = requests.get(search_url, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(resp.text, 'html.parser')
         
         titles = [t.text.strip() for t in soup.find_all("div", class_="track__title")]
@@ -46,8 +37,8 @@ def search():
         track_urls = [f"https://ru.hitmoz.org{a.get('href')}" for a in soup.find_all('a', class_='track__info-l')]
 
         tracks = []
-        count = min(limit, len(titles))
-        for i in range(count):
+        limit = int(request.args.get('limit', min(48, len(titles))))
+        for i in range(limit):
             tracks.append({
                 "id": track_urls[i] if i < len(track_urls) else f"track_{i}",
                 "title": titles[i] if i < len(titles) else "Без названия",
@@ -59,7 +50,7 @@ def search():
             })
         return jsonify(tracks)
     except Exception as e:
-        return jsonify({"error": f"Поиск временно недоступен: {str(e)}"}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/download')
 def download():
@@ -68,23 +59,14 @@ def download():
         return jsonify({"error": "Missing url_down"}), 400
     try:
         full_url = f"https://ru.hitmoz.org{url_down}"
-        session = requests.Session()
-        session.get('https://ru.hitmoz.org/', headers=HEADERS, timeout=10)
-        mp3 = session.get(full_url, headers=HEADERS, timeout=30)
+        mp3 = requests.get(full_url, headers=HEADERS, timeout=30)
         if mp3.status_code != 200:
             return jsonify({"error": f"Download failed: {mp3.status_code}"}), 500
         filename = url_down.split('/')[-1]
         if not filename.endswith('.mp3'):
             filename += '.mp3'
-        return Response(
-            mp3.content,
-            headers={
-                'Content-Type': 'audio/mpeg',
-                'Content-Length': str(len(mp3.content)),
-                'Content-Disposition': f'attachment; filename="{quote(filename)}"',
-                'Access-Control-Allow-Origin': '*'
-            }
-        )
+        return Response(mp3.content, content_type='audio/mpeg',
+                       headers={'Content-Disposition': f'attachment; filename="{quote(filename)}"'})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
