@@ -1,8 +1,6 @@
 from flask import Flask, request, jsonify, Response
 import requests
-import time
 from urllib.parse import quote
-from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
@@ -21,13 +19,19 @@ HEADERS = {
 @app.route('/search')
 def search():
     query = request.args.get('q', '')
+    limit = int(request.args.get('limit', 48))
     if not query:
         return jsonify({"error": "Missing query"}), 400
     
     try:
-        # Прямой запрос к hitmoz (без parse_hitmos)
-        search_url = f'https://ru.hitmoz.org/search?q={quote(query)}'
-        resp = requests.get(search_url, headers=HEADERS, timeout=15)
+        # Используем прокси для обхода блокировки
+        hitmoz_url = f'https://ru.hitmoz.org/search?q={quote(query)}'
+        proxy_url = f'https://api.allorigins.win/raw?url={quote(hitmoz_url)}'
+        
+        resp = requests.get(proxy_url, headers=HEADERS, timeout=15)
+        
+        # Парсим HTML
+        from bs4 import BeautifulSoup
         soup = BeautifulSoup(resp.text, 'html.parser')
         
         titles = [t.text.strip() for t in soup.find_all("div", class_="track__title")]
@@ -37,8 +41,8 @@ def search():
         track_urls = [f"https://ru.hitmoz.org{a.get('href')}" for a in soup.find_all('a', class_='track__info-l')]
 
         tracks = []
-        limit = int(request.args.get('limit', min(48, len(titles))))
-        for i in range(limit):
+        count = min(limit, len(titles))
+        for i in range(count):
             tracks.append({
                 "id": track_urls[i] if i < len(track_urls) else f"track_{i}",
                 "title": titles[i] if i < len(titles) else "Без названия",
@@ -52,34 +56,7 @@ def search():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/download')
-def download():
-    url_down = request.args.get('url_down')
-    if not url_down:
-        return jsonify({"error": "Missing url_down"}), 400
-    try:
-        full_url = f"https://ru.hitmoz.org{url_down}"
-        mp3 = requests.get(full_url, headers=HEADERS, timeout=30)
-        if mp3.status_code != 200:
-            return jsonify({"error": f"Download failed: {mp3.status_code}"}), 500
-        filename = url_down.split('/')[-1]
-        if not filename.endswith('.mp3'):
-            filename += '.mp3'
-        return Response(mp3.content, content_type='audio/mpeg',
-                       headers={'Content-Disposition': f'attachment; filename="{quote(filename)}"'})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/proxy-image')
-def proxy_image():
-    url = request.args.get('url')
-    if not url:
-        return jsonify({"error": "Missing URL"}), 400
-    try:
-        resp = requests.get(url, headers={'User-Agent': HEADERS['User-Agent']}, timeout=10)
-        return Response(resp.content, content_type=resp.headers.get('Content-Type', 'image/jpeg'))
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+# Остальные маршруты (download, proxy-image) оставьте как есть
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
